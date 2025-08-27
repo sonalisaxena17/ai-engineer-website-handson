@@ -1,0 +1,30 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//AI Engineer Summit//Calendar Event Generator//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:ai-engineer-summit-2025-1756296073@ai.engineer
+DTSTART:20251119T090000Z
+DTEND:20251122T170000Z
+DTSTAMP:20250827T120113Z
+SUMMARY:AI Engineer Summit 2025
+LOCATION:New York\, New York
+DESCRIPTION:The premier technical AI summit for AI Engineers & AI Leaders who ship. Invite-only\, curated for top AI Engineers.\n\nWebsite: https://apply.ai.engineer/\nApplication Deadline: September 15\, 2025
+ORGANIZER:CN=AI Engineer Summit
+URL:https://apply.ai.engineer/
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+CATEGORIES:CONFERENCE,TECHNOLOGY,AI
+BEGIN:VALARM
+TRIGGER:-P1D
+ACTION:DISPLAY
+DESCRIPTION:AI Engineer Summit 2025 starts tomorrow!
+END:VALARM
+BEGIN:VALARM
+TRIGGER:-PT1H
+ACTION:DISPLAY
+DESCRIPTION:AI Engineer Summit 2025 starts in 1 hour!
+END:VALARM
+END:VEVENT
+END:VCALENDAR
