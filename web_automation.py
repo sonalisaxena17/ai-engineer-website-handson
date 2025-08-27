@@ -38,7 +38,7 @@ class AIEngineerWebAutomation:
     """Automate interactions with AI Engineer Summit website"""
     
     def __init__(self):
-        self.base_url = "https://apply.ai.engineer/"
+        self.base_url = "https://www.ai.engineer/"
         self.calendar_generator = AIEngineerCalendarGenerator()
         self.browser = None
         self.page = None
@@ -115,63 +115,346 @@ class AIEngineerWebAutomation:
             print(f"❌ Error during email signup: {e}")
             return False
     
-    async def extract_event_info(self):
-        """Extract event information from the website"""
+    async def extract_multiple_events(self):
+        """Extract multiple event information from the website"""
+        import re
+        
         try:
-            print("🔍 Extracting event information from website...")
+            print("🔍 Extracting multiple events from website...")
             
             # Get page content
             content = await self.page.content()
             soup = BeautifulSoup(content, 'html.parser')
             
-            # Extract event details
-            event_info = {
-                'title': None,
-                'date': None,
-                'location': None,
-                'description': None
-            }
+            events = []
             
-            # Look for event title
-            title_selectors = ['h1', '.title', '[class*="title"]', '[class*="heading"]']
-            for selector in title_selectors:
-                element = soup.select_one(selector)
-                if element and 'AI Engineer' in element.get_text():
-                    event_info['title'] = element.get_text().strip()
-                    break
+            # Look for event containers - common patterns
+            event_containers = []
             
-            # Look for date information
-            text_content = soup.get_text()
-            if 'Nov' in text_content and '2025' in text_content:
-                # Extract date pattern
-                import re
-                date_pattern = r'Nov\s+\d+\s*[-–]\s*\d+,\s*2025'
-                date_match = re.search(date_pattern, text_content)
-                if date_match:
-                    event_info['date'] = date_match.group().strip()
+            # Try various selectors for event containers
+            container_selectors = [
+                '[class*="event"]',
+                '[class*="events"]',
+                '[class*="upcoming"]',
+                '[class*="conference"]', 
+                '[class*="summit"]',
+                '[class*="card"]',
+                'article',
+                'section',
+                'li',
+                'div',
+                '.event-item',
+                '.conference-item'
+            ]
             
-            # Look for location
-            if 'New York' in text_content:
-                event_info['location'] = 'New York, New York'
+            # Look for event cards/containers with specific patterns
+            # Target event-specific containers first
+            event_specific_containers = []
             
-            # Extract description
-            desc_selectors = ['p', '.description', '[class*="desc"]']
-            for selector in desc_selectors:
-                elements = soup.select(selector)
-                for element in elements:
-                    text = element.get_text().strip()
-                    if len(text) > 50 and ('AI Engineer' in text or 'summit' in text.lower()):
-                        event_info['description'] = text[:200] + '...'
-                        break
-                if event_info['description']:
-                    break
+            # Look for containers that likely contain individual events
+            potential_events = soup.find_all(['div', 'article', 'section'])
             
-            print(f"📊 Extracted event info: {event_info}")
-            return event_info
+            for container in potential_events:
+                container_text = container.get_text()
+                if not container_text:
+                    continue
+                    
+                # Check if this container has event indicators
+                container_lower = container_text.lower()
+                has_event_title = any(keyword in container_lower for keyword in 
+                    ['aie paris', 'fall summit', 'world\'s fair', 'ai engineer summit', 'ai engineer world', 'paris 2025'])
+                
+                # Look for specific event patterns including dates
+                has_date_location = bool(re.search(r'(paris.*2025|september.*paris|november.*new york|june.*san francisco)', container_lower))
+                
+                # Size filter - should be substantial but not the whole page
+                text_length = len(container_text.strip())
+                is_reasonable_size = 30 < text_length < 800
+                
+                # Must contain year indicator for events
+                has_year = bool(re.search(r'20\d{2}', container_text))
+                
+                if (has_event_title or has_date_location) and is_reasonable_size and has_year:
+                    event_specific_containers.append(container)
+                    # print(f"🎯 Found potential event container: {container_text[:80].replace(chr(10), ' ')}...")
+            
+            # Add these specific containers first
+            event_containers.extend(event_specific_containers)
+            
+            # Also scan with regular selectors for comprehensive coverage
+            for selector in container_selectors:
+                containers = soup.select(selector)
+                for container in containers:
+                    container_text = container.get_text().lower()
+                    # Check if this container likely contains event info
+                    if any(keyword in container_text for keyword in ['2025', '2026', 'summit', 'conference', 'event', 'workshop', 'meetup', 'hackathon']):
+                        event_containers.append(container)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_containers = []
+            for container in event_containers:
+                container_id = id(container)
+                if container_id not in seen:
+                    seen.add(container_id)
+                    unique_containers.append(container)
+            event_containers = unique_containers
+            
+            print(f"🔍 Found {len(event_containers)} potential event containers")
+            
+            # If no specific containers found, scan the entire page for event patterns
+            if not event_containers:
+                event_containers = [soup.body] if soup.body else [soup]
+            
+            for i, container in enumerate(event_containers):
+                event_info = self._extract_single_event(container)
+                # print(f"🔍 Container {i+1}: {container.name if hasattr(container, 'name') else 'unknown'} - {event_info.get('title') if event_info else 'No title found'}")
+                
+                if event_info and event_info.get('title'):
+                    # Avoid duplicates
+                    if not any(e.get('title') == event_info.get('title') for e in events):
+                        events.append(event_info)
+                        # print(f"✅ Added event: {event_info.get('title')}")
+            
+            print(f"📊 Found {len(events)} unique events: {[e.get('title', 'Untitled') for e in events]}")
+            return events
             
         except Exception as e:
-            print(f"❌ Error extracting event info: {e}")
-            return {}
+            print(f"❌ Error extracting events: {e}")
+            return []
+    
+    def _extract_single_event(self, container):
+        """Extract event information from a container element"""
+        import re
+        
+        text = container.get_text()
+        event_info = {
+            'title': None,
+            'date': None,
+            'location': None,
+            'description': None,
+            'url': None
+        }
+        
+        # Skip containers that are too large (likely page containers)
+        if len(text) > 2000:
+            return None
+            
+        # Skip containers with very little text
+        if len(text.strip()) < 10:
+            return None
+        
+        # Skip non-event content by checking for exclusion patterns
+        text_lower = text.lower()
+        exclude_patterns = [
+            'newsletter', 'email', 'spam', 'subscribe', 'join our', 'terms of service', 
+            'code of conduct', 'sponsor inquiry', 'scholarships', 'contact us', 
+            'copyright', '©', 'software 3.0', 'valuable insights', 'exclusive content',
+            'special offers', 'event updates', 'find more talks', 'watch our',
+            'what is an ai engineer', 'workshops'
+        ]
+        
+        if any(exclude in text_lower for exclude in exclude_patterns):
+            return None
+        
+        # Skip if the text looks like just a date string
+        date_only_patterns = [
+            r'^(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+[-–]\d+\s+20\d{2},?\s*[A-Za-z\s,]+$',
+            r'^(June|November|September)\s+\d+[-–](July\s+)?\d+\s+20\d{2},?\s*[A-Za-z\s,]+$'
+        ]
+        
+        for pattern in date_only_patterns:
+            if re.match(pattern, text.strip()):
+                print(f"🚫 Skipping date-only string: {text.strip()[:50]}")
+                return None
+        
+        # Must contain either a date pattern OR event-related keywords to be considered
+        has_date = False
+        if text and isinstance(text, str):
+            has_date = bool(re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+[\s\-–]*(\d+)?,?\s*20\d{2}', text, re.IGNORECASE))
+        
+        has_event_keywords = any(keyword in text_lower for keyword in ['summit', 'conference', 'fair', 'workshop', 'meetup', 'hackathon'])
+        
+        if not (has_date or has_event_keywords):
+            return None
+        
+        # Extract title - look for headings first, then strong text, then meaningful text
+        title_candidates = []
+        
+        # Check headings
+        headings = container.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+        for heading in headings:
+            heading_text = heading.get_text().strip()
+            if len(heading_text) > 3:
+                title_candidates.append(heading_text)
+        
+        # Check strong/bold text
+        strong_elements = container.find_all(['strong', 'b'])
+        for strong in strong_elements:
+            strong_text = strong.get_text().strip()
+            if len(strong_text) > 3 and len(strong_text) < 100:
+                title_candidates.append(strong_text)
+        
+        # Check links that might be event titles
+        links = container.find_all('a', href=True)
+        for link in links:
+            link_text = link.get_text().strip()
+            if len(link_text) > 3 and len(link_text) < 100:
+                title_candidates.append(link_text)
+        
+        # Use the most relevant title with broader keyword matching
+        for title in title_candidates:
+            title_lower = title.lower()
+            # Accept specific AI Engineer event patterns
+            if any(keyword in title_lower for keyword in ['summit', 'conference', 'fair', 'workshop', 'meetup', 'hackathon', 'aie paris']):
+                event_info['title'] = title
+                break
+        
+        # If no good title found and we have dates, try to find a meaningful title
+        if not event_info['title'] and has_date:
+            lines = text.strip().split('\n') if text else []
+            for line in lines:
+                line = line.strip()
+                # Skip lines that look like pure date strings
+                if re.match(r'^(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+', line):
+                    continue
+                if len(line) > 10 and len(line) < 100 and re.search(r'20\d{2}', line):
+                    event_info['title'] = line
+                    break
+        
+        # Extract dates - look for various date formats including those in titles
+        date_patterns = [
+            r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+\s*[-–]\s*\d+,?\s*20\d{2}',
+            r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+\s*[-–]\s*\d+,?\s*20\d{2}',
+            r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+,?\s*20\d{2}',
+            r'(September|November|June)\s+\d+[-–]\d+,?\s*20\d{2}',
+            r'\d{1,2}/\d{1,2}/20\d{2}',
+            r'20\d{2}-\d{2}-\d{2}'
+        ]
+        
+        # First, look for date info in the entire container text
+        for pattern in date_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                event_info['date'] = match.group().strip()
+                print(f"🗓️ Found date in text: {event_info['date']}")
+                break
+        
+        # Also check the title if we have one
+        title_text = event_info.get('title') or ''
+        if title_text and not event_info['date']:
+            for pattern in date_patterns:
+                match = re.search(pattern, title_text, re.IGNORECASE)
+                if match:
+                    event_info['date'] = match.group().strip()
+                    print(f"🗓️ Found date in title: {event_info['date']}")
+                    break
+        
+        # Look for specific event date patterns
+        if not event_info['date']:
+            # Check for specific patterns in the text
+            event_date_patterns = [
+                (r'september\s+23[-–]24.*2025', 'September 23-24, 2025'),
+                (r'november\s+20[-–]22.*2025', 'November 20-22, 2025'),
+                (r'june\s+30.*july\s+2.*2026', 'June 30-July 2, 2026'),
+                (r'march.*2025', 'March 2025')
+            ]
+            
+            for pattern, standard_date in event_date_patterns:
+                if re.search(pattern, text.lower()):
+                    event_info['date'] = standard_date
+                    print(f"🗓️ Found specific event date: {standard_date}")
+                    break
+        
+        # Extract location
+        location_patterns = [
+            r'(New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Miami|Las Vegas|Washington DC|Atlanta|Portland|Phoenix|Dallas|Houston|Toronto|Vancouver|London|Berlin|Paris|Tokyo|Sydney)',
+            r'[A-Z][a-z]+,\s*[A-Z]{2}',
+            r'[A-Z][a-z]+\s+[A-Z][a-z]+,\s*[A-Z]{2}'
+        ]
+        
+        for pattern in location_patterns:
+            match = re.search(pattern, text)
+            if match:
+                event_info['location'] = match.group().strip()
+                break
+        
+        # Extract description - find meaningful paragraphs
+        paragraphs = container.find_all('p')
+        for p in paragraphs:
+            p_text = p.get_text().strip()
+            if len(p_text) > 30:
+                event_info['description'] = p_text[:300] + ('...' if len(p_text) > 300 else '')
+                break
+        
+        # If no paragraph description, use container text but limit it
+        if not event_info['description'] and len(text.strip()) > 30:
+            clean_text = ' '.join(text.split())  # Remove extra whitespace
+            event_info['description'] = clean_text[:200] + ('...' if len(clean_text) > 200 else '')
+        
+        # Extract URL
+        for link in links:
+            href = link.get('href')
+            if href and ('apply' in href or 'register' in href or 'event' in href or 'ticket' in href):
+                if href.startswith('http'):
+                    event_info['url'] = href
+                else:
+                    event_info['url'] = urljoin(self.base_url, href)
+                break
+        
+        # Only return event if it has at least a title
+        if event_info['title']:
+            return event_info
+        
+        return None
+    
+    def select_events_interactive(self, events):
+        """Interactive selection of events to generate calendar invites for"""
+        if not events:
+            print("❌ No events found to select from")
+            return []
+        
+        print("\n📅 Available Events:")
+        print("=" * 50)
+        
+        for i, event in enumerate(events, 1):
+            title = event.get('title', 'Untitled Event')
+            date = event.get('date', 'Date TBD')
+            location = event.get('location', 'Location TBD')
+            print(f"{i}. {title}")
+            print(f"   📅 {date}")
+            print(f"   📍 {location}")
+            print()
+        
+        # Get user selection
+        while True:
+            try:
+                choice = input("Select events to download (comma-separated numbers, or 'all'): ").strip().lower()
+                
+                if choice == 'all':
+                    return events
+                
+                if choice == '':
+                    print("❌ Please make a selection or type 'all'")
+                    continue
+                
+                # Parse comma-separated numbers
+                selections = []
+                for num_str in choice.split(','):
+                    num = int(num_str.strip())
+                    if 1 <= num <= len(events):
+                        selections.append(events[num - 1])
+                    else:
+                        print(f"❌ Invalid selection: {num}. Please choose between 1-{len(events)}")
+                        break
+                else:
+                    return selections
+                    
+            except ValueError:
+                print("❌ Please enter numbers separated by commas, or 'all'")
+            except KeyboardInterrupt:
+                print("\n⏹️ Selection cancelled")
+                return []
     
     async def open_external_forms(self):
         """Open external forms in new tabs"""
@@ -212,8 +495,8 @@ class AIEngineerWebAutomation:
         if not await self.navigate_to_site():
             return False
         
-        # Extract event information
-        event_info = await self.extract_event_info()
+        # Extract multiple events from the website
+        events = await self.extract_multiple_events()
         
         # Auto signup email if provided
         if email:
@@ -222,21 +505,26 @@ class AIEngineerWebAutomation:
         # Find external forms
         external_links = await self.open_external_forms()
         
-        # Generate calendar event if requested
-        if generate_calendar:
-            print("\n📅 Generating calendar event...")
-            calendar_file = self.calendar_generator.save_calendar_file()
-            if calendar_file:
-                print(f"✅ Calendar file generated: {calendar_file}")
+        # Generate calendar events if requested
+        calendar_files = []
+        if generate_calendar and events:
+            # Let user select which events to download
+            selected_events = self.select_events_interactive(events)
+            
+            if selected_events:
+                print("\n📅 Generating calendar files...")
+                calendar_files = self.calendar_generator.save_multiple_calendar_files(selected_events)
         
         # Save automation results
         results = {
             'timestamp': time.time(),
             'website_url': self.base_url,
-            'event_info': event_info,
+            'events_found': len(events),
+            'events_info': events,
             'external_links': external_links,
             'email_signup': email is not None,
-            'calendar_generated': generate_calendar
+            'calendar_files_generated': len(calendar_files),
+            'calendar_files': [str(f) for f in calendar_files]
         }
         
         # Save results to JSON file
